@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Certificado · Clubes Ambientales Escolares</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main>
+  <header class="marca">
+    <div class="org">Secretaría de <b>Ambiente y Desarrollo Sustentable</b> · Centro de Formación Ambiental Anchipurac</div>
+    <h1>CERTIFICADO</h1>
+    <h2>CLUBES AMBIENTALES ESCOLARES</h2>
+  </header>
+
+  <section class="tarjeta">
+    <h3>Descargá tu certificado</h3>
+    <p class="ayuda">Ingresá tus datos tal como figuran en tu DNI.</p>
+    <form id="form" novalidate>
+      <label for="nombre">Nombre y apellido completos</label>
+      <input type="text" id="nombre" autocomplete="name" maxlength="80" required>
+      <label for="dni">DNI (sin puntos)</label>
+      <input type="text" id="dni" inputmode="numeric" autocomplete="off" maxlength="12" required>
+      <button type="submit" id="generar" class="completo">Generar certificado</button>
+    </form>
+    <div id="mensaje" class="mensaje" hidden></div>
+    <a id="descarga" class="boton completo" hidden>Descargar certificado (PDF)</a>
+  </section>
+
+  <footer>Si tus datos no figuran o hay un error en tu nombre, comunicate con el Centro de Formación Ambiental Anchipurac.</footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="comun.js"></script>
+<script src="datos/plantilla.js"></script>
+<script src="datos/habilitados.js"></script>
+<script src="datos/firmas.js"></script>
+<script>
+// Posiciones sobre la plantilla, en puntos PDF (origen abajo a la izquierda).
+// Si cambia el diseño de la plantilla, se ajustan acá.
+const DISENO = {
+  renglonY: 358.6,                         // línea base del renglón "Se certifica que ___ DNI ___"
+  nombre: { x0: 404.4, x1: 607.4 },        // espacio en blanco del nombre
+  dni: { x0: 631.5, x1: 730.2 },           // espacio en blanco del DNI
+  tamano: 11, tamanoMin: 6.5,
+  color: [0.137, 0.122, 0.125],
+  firmas: {                                // centradas sobre cada línea de firma
+    y: 105, anchoMax: 135, altoMax: 58,
+    izq: 312.4,                            // Directora del Centro
+    der: 529.4,                            // Secretario
+  },
+};
+
+const $ = (id) => document.getElementById(id);
+
+function mostrar(tipo, texto) {
+  const m = $("mensaje");
+  m.className = "mensaje " + tipo;
+  m.textContent = texto;
+  m.hidden = false;
+}
+
+function textoCentrado(pagina, fuente, texto, zona) {
+  const permitidos = new Set(fuente.getCharacterSet());
+  texto = Array.from(texto).filter((c) => permitidos.has(c.codePointAt(0))).join("");
+  const ancho = zona.x1 - zona.x0 - 4;
+  let t = DISENO.tamano;
+  while (t > DISENO.tamanoMin && fuente.widthOfTextAtSize(texto, t) > ancho) t -= 0.25;
+  const w = fuente.widthOfTextAtSize(texto, t);
+  pagina.drawText(texto, {
+    x: zona.x0 + (zona.x1 - zona.x0 - w) / 2,
+    y: DISENO.renglonY,
+    size: t,
+    font: fuente,
+    color: PDFLib.rgb(...DISENO.color),
+  });
+}
+
+async function ponerFirma(doc, pagina, dataUrl, centroX) {
+  if (!dataUrl) return;
+  const bytes = CAE.unb64(dataUrl.split(",")[1]);
+  const img = /^data:image\/jpe?g/.test(dataUrl) ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
+  const f = DISENO.firmas;
+  const escala = Math.min(f.anchoMax / img.width, f.altoMax / img.height);
+  const w = img.width * escala, h = img.height * escala;
+  // Multiply: el fondo blanco de una firma escaneada no tapa la línea ni el texto.
+  pagina.drawImage(img, { x: centroX - w / 2, y: f.y, width: w, height: h, blendMode: PDFLib.BlendMode.Multiply });
+}
+
+async function crearCertificado(nombre, dni) {
+  const doc = await PDFLib.PDFDocument.load(CAE.unb64(window.CAE_PLANTILLA));
+  const pagina = doc.getPages()[0];
+  const fuente = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+  textoCentrado(pagina, fuente, nombre, DISENO.nombre);
+  textoCentrado(pagina, fuente, CAE.formatearDni(dni), DISENO.dni);
+  const firmas = window.CAE_FIRMAS || {};
+  await ponerFirma(doc, pagina, firmas.izq, DISENO.firmas.izq);
+  await ponerFirma(doc, pagina, firmas.der, DISENO.firmas.der);
+  doc.setTitle("Certificado Clubes Ambientales Escolares - " + nombre);
+  doc.setAuthor("Centro de Formación Ambiental Anchipurac");
+  return doc.save();
+}
+
+let urlAnterior = null;
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("descarga").hidden = true;
+  const tipeado = CAE.limpiarNombre($("nombre").value);
+  const dni = CAE.normalizarDni($("dni").value);
+  if (tipeado.length < 5 || !tipeado.includes(" ")) return mostrar("error", "Ingresá tu nombre y apellido completos.");
+  if (!dni) return mostrar("error", "Ingresá un número de DNI válido.");
+  if (!window.CAE_HABILITADOS || !window.CAE_PLANTILLA || !window.PDFLib) {
+    return mostrar("error", "El sistema no está disponible en este momento. Probá de nuevo más tarde.");
+  }
+
+  const boton = $("generar");
+  boton.disabled = true;
+  mostrar("info", "Verificando datos…");
+  try {
+    const enLista = await CAE.buscarHabilitado(dni, window.CAE_HABILITADOS);
+    if (enLista === null) {
+      return mostrar("error", "El DNI ingresado no figura en la lista de docentes habilitados para este certificado.");
+    }
+    if (enLista && !CAE.nombresCoinciden(enLista, tipeado)) {
+      return mostrar("error", "El nombre ingresado no coincide con el registrado para ese DNI. Revisalo e intentá de nuevo.");
+    }
+    // Si la lista trae nombre, el certificado sale con ese (el oficial); si no, con el tipeado.
+    const nombre = enLista ? CAE.limpiarNombre(enLista) : tipeado;
+    const pdf = await crearCertificado(nombre, dni);
+    if (urlAnterior) URL.revokeObjectURL(urlAnterior);
+    urlAnterior = URL.createObjectURL(new Blob([pdf], { type: "application/pdf" }));
+    const a = $("descarga");
+    a.href = urlAnterior;
+    a.download = "Certificado-CAE-" + dni + ".pdf";
+    a.hidden = false;
+    mostrar("ok", "Certificado generado a nombre de " + nombre + ".");
+    a.click();
+  } catch (err) {
+    console.error(err);
+    mostrar("error", "No se pudo generar el certificado. Probá de nuevo.");
+  } finally {
+    boton.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

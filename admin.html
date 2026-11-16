@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carga de datos · Certificados CAE</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main class="ancho">
+  <header class="marca">
+    <h1>Carga de datos</h1>
+    <h2>Certificados Clubes Ambientales Escolares</h2>
+  </header>
+
+  <div class="mensaje info">
+    Esta página trabaja solo en tu computadora: nada de lo que cargues se envía a ningún lado.
+    Cada paso descarga un archivo que tenés que copiar dentro de la carpeta <code>datos</code>, reemplazando el que ya está.
+  </div>
+
+  <section class="tarjeta" style="margin-top:20px">
+    <h3>1. Lista de habilitados</h3>
+    <p class="ayuda">
+      Copiá desde Excel las columnas con DNI y nombre (en cualquier orden, con o sin encabezado) y pegalas acá,
+      o elegí un archivo CSV. El nombre es opcional: si lo cargás, el certificado sale con el nombre de la lista.
+    </p>
+    <textarea id="lista" placeholder="12345678	PÉREZ, JUAN CARLOS&#10;23456789	GÓMEZ, MARÍA LAURA"></textarea>
+    <input type="file" id="archivoLista" accept=".csv,.txt,.tsv" style="margin-top:10px">
+    <div id="resumenLista" class="mensaje info" hidden></div>
+    <table id="vistaLista" hidden></table>
+    <button id="generarLista">Generar habilitados.js</button>
+  </section>
+
+  <section class="tarjeta">
+    <h3>2. Firmas</h3>
+    <p class="ayuda">
+      Imagen de cada firma (y sello, si corresponde), idealmente PNG con fondo transparente, recortada sin márgenes.
+      Se colocan centradas sobre cada línea de firma. Si la plantilla ya trae las firmas incorporadas, salteá este paso.
+    </p>
+    <div class="fila">
+      <div>
+        <label for="firmaIzq">Lic. Jenifer Tudela (izquierda)</label>
+        <input type="file" id="firmaIzq" accept="image/png,image/jpeg">
+        <img id="vistaIzq" class="vista-firma" alt="" hidden>
+      </div>
+      <div>
+        <label for="firmaDer">Dr. Federico Ríos (derecha)</label>
+        <input type="file" id="firmaDer" accept="image/png,image/jpeg">
+        <img id="vistaDer" class="vista-firma" alt="" hidden>
+      </div>
+    </div>
+    <button id="generarFirmas">Generar firmas.js</button>
+    <div id="mensajeFirmas" class="mensaje" hidden></div>
+  </section>
+
+  <section class="tarjeta">
+    <h3>3. Plantilla (solo si cambia el diseño)</h3>
+    <p class="ayuda">
+      PDF de una página con el certificado en blanco. Si se mueven de lugar los renglones del nombre, DNI o firmas,
+      hay que ajustar las posiciones en <code>index.html</code> (bloque <code>DISENO</code>).
+    </p>
+    <input type="file" id="archivoPlantilla" accept="application/pdf">
+    <button id="generarPlantilla">Generar plantilla.js</button>
+    <div id="mensajePlantilla" class="mensaje" hidden></div>
+  </section>
+</main>
+
+<script src="comun.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const ITERACIONES = 50000;
+
+function descargar(nombre, contenido) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([contenido], { type: "text/javascript" }));
+  a.download = nombre;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+function aviso(id, tipo, texto) {
+  const m = $(id);
+  m.className = "mensaje " + tipo;
+  m.textContent = texto;
+  m.hidden = false;
+}
+
+async function leerTexto(archivo) {
+  const bytes = await archivo.arrayBuffer();
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("windows-1252").decode(bytes); // CSV guardado desde Excel
+  }
+}
+
+function leerDataUrl(archivo) {
+  return new Promise((ok, mal) => {
+    const r = new FileReader();
+    r.onload = () => ok(r.result);
+    r.onerror = () => mal(r.error);
+    r.readAsDataURL(archivo);
+  });
+}
+
+// Cada renglón: la celda que parece un DNI es el DNI; el resto de las celdas forman el nombre.
+function interpretarLista(texto) {
+  const personas = new Map();
+  const descartadas = [];
+  let repetidos = 0;
+  texto.split(/\r?\n/).forEach((linea, i) => {
+    if (!linea.trim()) return;
+    const sep = linea.includes("\t") ? "\t" : linea.includes(";") ? ";" : ",";
+    const celdas = linea.split(sep).map((c) => c.replace(/^\s*"|"\s*$/g, "").trim()).filter(Boolean);
+    const pos = celdas.findIndex((c) => /^[\d.\s]+$/.test(c) && /^\d{7,8}$/.test(CAE.normalizarDni(c)));
+    if (pos === -1) {
+      descartadas.push(i + 1);
+      return;
+    }
+    const dni = CAE.normalizarDni(celdas[pos]);
+    const nombre = CAE.limpiarNombre(celdas.filter((c, j) => j !== pos && !/^[\d.\s]+$/.test(c)).join(" "));
+    if (personas.has(dni)) repetidos++;
+    personas.set(dni, nombre);
+  });
+  return { personas, descartadas, repetidos };
+}
+
+function revisarLista() {
+  const { personas, descartadas, repetidos } = interpretarLista($("lista").value);
+  const sinNombre = [...personas.values()].filter((n) => !n).length;
+  let texto = personas.size + " personas con DNI válido.";
+  if (sinNombre) texto += " " + sinNombre + " sin nombre (usarán el nombre que tipeen).";
+  if (repetidos) texto += " " + repetidos + " DNI repetidos (se toma el último).";
+  if (descartadas.length) {
+    texto += " Renglones sin DNI reconocible, ignorados: " + descartadas.slice(0, 15).join(", ") + (descartadas.length > 15 ? "…" : "") + ".";
+  }
+  aviso("resumenLista", personas.size ? "info" : "error", texto);
+  const tabla = $("vistaLista");
+  tabla.replaceChildren();
+  [["DNI", "Nombre (primeros 5)"], ...[...personas].slice(0, 5)].forEach((fila, i) => {
+    const tr = tabla.insertRow();
+    fila.forEach((v) => (tr.appendChild(document.createElement(i ? "td" : "th")).textContent = v || "—"));
+  });
+  tabla.hidden = !personas.size;
+  return personas;
+}
+
+$("lista").addEventListener("input", revisarLista);
+$("archivoLista").addEventListener("change", async (e) => {
+  if (!e.target.files[0]) return;
+  $("lista").value = await leerTexto(e.target.files[0]);
+  revisarLista();
+});
+
+async function construirHabilitados(personas, alAvanzar) {
+  const sal = CAE.hex(crypto.getRandomValues(new Uint8Array(16)));
+  const reg = {};
+  const entradas = [...personas];
+  for (let i = 0; i < entradas.length; i += 8) {
+    const lote = await Promise.all(entradas.slice(i, i + 8).map(([dni, nombre]) => CAE.cifrarRegistro(dni, nombre, sal, ITERACIONES)));
+    lote.forEach(([id, valor]) => (reg[id] = valor));
+    if (alAvanzar) alAvanzar(Math.min(i + 8, entradas.length), entradas.length);
+  }
+  return "window.CAE_HABILITADOS = " + JSON.stringify({ v: 1, sal, iter: ITERACIONES, total: entradas.length, reg }) + ";\n";
+}
+
+$("generarLista").addEventListener("click", async () => {
+  const personas = revisarLista();
+  if (!personas.size) return;
+  const boton = $("generarLista");
+  boton.disabled = true;
+  try {
+    const js = await construirHabilitados(personas, (hechos, total) => (boton.textContent = "Procesando " + hechos + " de " + total + "…"));
+    descargar("habilitados.js", js);
+    aviso("resumenLista", "ok", "Listo: " + personas.size + " personas. Copiá el archivo descargado habilitados.js dentro de la carpeta datos.");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = "Generar habilitados.js";
+  }
+});
+
+for (const lado of ["Izq", "Der"]) {
+  $("firma" + lado).addEventListener("change", async (e) => {
+    const img = $("vista" + lado);
+    img.hidden = !e.target.files[0];
+    if (e.target.files[0]) img.src = await leerDataUrl(e.target.files[0]);
+  });
+}
+
+$("generarFirmas").addEventListener("click", async () => {
+  const izq = $("firmaIzq").files[0], der = $("firmaDer").files[0];
+  if (!izq && !der) return aviso("mensajeFirmas", "error", "Elegí al menos una imagen de firma.");
+  const datos = { izq: izq ? await leerDataUrl(izq) : null, der: der ? await leerDataUrl(der) : null };
+  descargar("firmas.js", "window.CAE_FIRMAS = " + JSON.stringify(datos) + ";\n");
+  aviso("mensajeFirmas", "ok", "Listo. Copiá el archivo descargado firmas.js dentro de la carpeta datos.");
+});
+
+$("generarPlantilla").addEventListener("click", async () => {
+  const pdf = $("archivoPlantilla").files[0];
+  if (!pdf) return aviso("mensajePlantilla", "error", "Elegí el PDF de la plantilla.");
+  const b64 = CAE.b64(new Uint8Array(await pdf.arrayBuffer()));
+  descargar("plantilla.js", "window.CAE_PLANTILLA = " + JSON.stringify(b64) + ";\n");
+  aviso("mensajePlantilla", "ok", "Listo. Copiá el archivo descargado plantilla.js dentro de la carpeta datos.");
+});
+</script>
+</body>
+</html>

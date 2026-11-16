@@ -1,0 +1,2 @@
+// LISTA DE PRUEBA (DNI 11111111, 22222222 y 33333333). Reemplazar por la generada desde admin.html (paso 1).
+window.CAE_HABILITADOS = {"v":1,"sal":"7d590358a26ed3eeac5de6759f80602d","iter":50000,"total":3,"reg":{"5b197cff700e6d68a1529076":"pRE1f6knMCxh2/ro4Py/qEufhylVLrS+cZw9T3ndwJ7DU4Ah0Vpf6lZgwkxI","b398e8900691260ea440c2c6":"Fn1J+R9tjTkVM9MnRMiJLYmEIw9cGtGlptJWC3ncprhelOEooDC+oILp1PVXJi7ml29kg415zHbRuajSoZejyTKVnSMoNfdphP/3cJclA3+V7Q==","aa4b82d2f9b9b05d3ddb435f":"XvjwUFj4FfX+vRPR9zb/gwXHE28oPtp5aM3fLg=="}};
